@@ -1,0 +1,372 @@
+//Arduino GPS box sketch
+
+//Servo on pin 9
+//GPS on Serial 
+//uLCD on SerialS (Software Serial)
+//LEDS on 10,11,12,13
+
+#include <Servo.h>
+#include <TinyGPS.h>
+#include <SoftwareSerial.h>
+#include <EEPROM.h>
+
+//const float lat4 = ; //My House
+//const float lon4 = ;
+
+const float lat1 = 30.123456; //Locations changed to protect the innocent
+const float lon1 = -96.123456;
+const float lat2 = 30.123456; //Location 2
+const float lon2 = -96.123456;
+const float lat3 = 30.123456; //Location 3
+const float lon3 = -96.123456;
+const float lat4 = 30.123456; //Location 4
+const float lon4 = -96.123456;
+const float tol = 0.0015; //approx 100m per .001
+
+float flat;
+float flon;
+String LAT;
+String LON;
+int clue1;
+int clue2;
+int clue3;
+int clue4;
+char BUTTON;
+char temp[20];
+
+TinyGPS gps;
+Servo myservo;
+SoftwareSerial SerialS(4, 5);
+
+void setup() {
+  Serial.begin(9600); //For GPS
+  SerialS.begin(9600); //For LCD
+  
+  pinMode(10, OUTPUT); //For LEDs
+  pinMode(11, OUTPUT);
+  pinMode(12, OUTPUT);
+  pinMode(13, OUTPUT);
+  
+  myservo.attach(9); //Close box on startup
+  delay(200);
+  myservo.write(90);
+  delay(200);
+  myservo.detach(); //Software Serial caused the servo to randomly twitch, so i just disconnected it after I had set the position
+  
+  clue1 = EEPROM.read(10); //Read clues from last time to
+  clue2 = EEPROM.read(11);
+  clue3 = EEPROM.read(12);
+  clue4 = EEPROM.read(13);
+
+//  clue1 = 0; //For Debugging
+//  clue2 = 0;
+//  clue3 = 0;
+//  clue4 = 0;
+
+}
+
+void loop() {
+  bool newData = false;
+  unsigned long chars;
+  unsigned short sentences, failed;
+
+  // Get GPS data (refresh rate 1HZ)
+  for (unsigned long start = millis(); millis() - start < 1000;)
+  {
+    while (Serial.available())
+    {
+      char c = Serial.read();
+      if (gps.encode(c)) // Read new GPS data
+        newData = true;
+    }
+  }
+
+  if (newData)
+  {
+    unsigned long age;
+    gps.f_get_position(&flat, &flon, &age); //Convert NMEA string to lat and lon and fix age
+    
+    if (age == TinyGPS::GPS_INVALID_AGE){ //This line lets the user know if the fix is old, i.e. has not been updated
+      LAT = "Low Signal";
+      LON = "Low Signal";
+    }
+    else {
+      LAT = floatToString(flat, 6); //Convert the LAT and LON values to text strings
+      LON = floatToString(flon, 6);
+    }
+  }
+  
+  WriteString(LAT, 0); //These are functions I created for the uLCD to write text strings to elements on the display. This is done via serial data
+  WriteString(LON, 1);
+  WriteString(LAT, 2);
+  WriteString(LON, 3);
+  WriteString(LAT, 4);
+  WriteString(LON, 5);
+  WriteString(LAT, 6);
+  WriteString(LON, 7);
+  
+  
+  if (clue1 == 1) { //Set LEDs if the clues have been completed
+    digitalWrite(10, HIGH);
+  }
+  else {
+    digitalWrite(10, LOW);
+  }
+  
+  if (clue2 == 1) {
+    digitalWrite(11, HIGH);
+  }
+  else {
+    digitalWrite(11, LOW);
+  }
+  
+  if (clue3 == 1) {
+    digitalWrite(12, HIGH);
+  }
+  else {
+    digitalWrite(12, LOW);
+  }
+  
+  if (clue4 == 1) {
+    digitalWrite(13, HIGH);
+  }
+  else {
+    digitalWrite(13, LOW);
+  }
+  
+  
+  while (SerialS.available()) { //Detect button press for the display.
+      char a = SerialS.read();
+      if ((a == 0x09)||(a == 0x0b)||(a == 0x0e)||(a == 0x11)||(a == 0x14)||(a==0x16)) { //This eliminated some false data that occured due to the screen sending a ACK byte every time I sent it something by only 'looking' for the button press serial commands
+        BUTTON = a;
+        //Serial.print(a, HEX);
+        //Serial.print(" ");
+      }
+      else {}
+  }
+  
+  //Serial.println(BUTTON, HEX);
+  
+  if ((BUTTON == 0x0b)&&(flat > lat1-tol)&&(flat < lat1+tol)&&(flon > lon1-tol)&&(flon < lon1+tol)) { //Check for clue 1 location when "check position" button is pressed
+    clue1 = 1;
+    EEPROM.write(10, 1); //write EEPROM to show clue 1 has been solved
+    Correct(); //flash congrat screen (see below)
+    BUTTON = 0; //reset button function
+  }
+  else if (BUTTON == 0x0b) { //if the location is wrong
+    Fail(); //flash fail screen (see below)
+    BUTTON = 0; //reset button
+  }
+  
+  if ((BUTTON == 0x0e)&&(flat > lat2-tol)&&(flat < lat2+tol)&&(flon > lon2-tol)&&(flon < lon2+tol)) { //check for clue 2 location
+    clue2 = 1;
+    EEPROM.write(11, 1);
+    Correct();
+    BUTTON = 0;
+  }
+  else if (BUTTON == 0x0e) {
+    Fail();
+    BUTTON = 0;
+  }
+  
+  if ((BUTTON == 0x11)&&(flat > lat3-tol)&&(flat < lat3+tol)&&(flon > lon3-tol)&&(flon < lon3+tol)) { //check for clue 3 location
+    clue3 = 1;
+    EEPROM.write(12, 1);
+    Correct();
+    BUTTON = 0;
+  }
+  else if (BUTTON == 0x11) { 
+    Fail();
+    BUTTON = 0;
+  }
+  
+  if ((BUTTON == 0x14)&&(flat > lat4-tol)&&(flat < lat4+tol)&&(flon > lon4-tol)&&(flon < lon4+tol)) { //check for clue 4 location
+    clue4 = 1;
+    EEPROM.write(13, 1);
+    Correct();
+    BUTTON = 0;
+  }
+  else if (BUTTON == 0x14) {
+    Fail();
+    BUTTON = 0;
+  }
+  
+  if ((BUTTON == 0x09)&&(clue1 == 1)&&(clue2 == 1)&&(clue3 == 1)&&(clue4 == 1)) { //Check if all clues are complete when "open" button on main screen is pressed
+    Open(); //opens the box
+    BUTTON = 0;
+  }
+  else if (BUTTON == 0x09) {
+    Fail();
+    BUTTON = 0;
+  }
+  
+  if (BUTTON == 0x16) { //After open screen, check if lock button is pressed
+    Lock(); //Re-lock box
+    BUTTON = 0;
+  }
+ 
+  
+}
+
+//Now for the fun part: FUNCTIONS!!!
+
+void Lock() {
+  myservo.attach(9); //Same attach/detach routine as above to avoid servo jitter due to software serial
+  delay(200);
+  myservo.write(90);
+  delay(200);
+  myservo.detach();
+  
+  SerialS.write(0x01); //This reverts back to the main screen 
+  SerialS.write(0x0a);
+  SerialS.write(0x05);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x0e);
+}
+
+void Open() {
+  SerialS.write(0x01); //this calls the 'box opened' screen
+  SerialS.write(0x0a);
+  SerialS.write(0x0f);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x04);
+  
+  SerialS.write(0x01); //this plays a sound
+  SerialS.write(0x16);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x01);
+  SerialS.write(0x16);
+ 
+  myservo.attach(9); //this writes the servo so the box can be opened
+  delay(200);
+  myservo.write(45);
+  delay(200);
+  myservo.detach();
+}
+
+void Correct() {
+  SerialS.write(0x01); //this flashes a congratulatory screen
+  SerialS.write(0x0a);
+  SerialS.write(0x0e);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x05);
+  
+  delay(100);
+  
+  SerialS.write(0x01); //this plays a sound
+  SerialS.write(0x16);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x17);
+  
+  delay(3000);
+  
+  SerialS.write(0x01); //after 3 seconds, it reverts back to the main screen
+  SerialS.write(0x0a);
+  SerialS.write(0x05);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x0e);
+}
+
+
+
+void Fail() {
+  long rand = random(3); //generate a random number
+  SerialS.write(0x01); //the below clusterfuck pretty much selects 1 of 3 frames with a picture of a puppy on it
+  SerialS.write(0x0A);
+  if (rand==0) {
+    SerialS.write(0x0b);
+  }
+  else if (rand == 1) {
+    SerialS.write(0x0c);
+  }
+  else {
+    SerialS.write(0x0d);
+  }
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  if (rand==0) {
+    SerialS.write((byte)0x00);
+  }
+  else if (rand == 1) {
+    SerialS.write(0x07);
+  }
+  else {
+    SerialS.write(0x06);
+  }
+  delay(3000);
+  
+  SerialS.write(0x01); //reverts to the main screen after 3 seconds
+  SerialS.write(0x0a);
+  SerialS.write(0x05);
+  SerialS.write((byte)0x00);
+  SerialS.write((byte)0x00);
+  SerialS.write(0x0e);
+
+}  
+
+
+
+void WriteString(String STR1, char ADDR1) {  //function i made to write strings to the uLCD
+  
+  char buffer[100]; //initiate a characther buffer
+  STR1.toCharArray(buffer, 100); //convert the string to a character array
+  
+  int length = STR1.length(); //get length
+  
+  byte cksum = 2^ADDR1^length; //calculate checksum (necessary for confirmation with the uLCD)
+  
+  SerialS.write(2); //Prefix for the serial data
+  SerialS.write(ADDR1);
+  SerialS.write(length);
+  
+  for (int i=0; i<=length-1; i++) { //Send the string one byte at a time
+    cksum = cksum ^ buffer[i];
+    SerialS.write(buffer[i]);
+  }
+  SerialS.write(cksum); //conclude with checksum
+}
+
+
+String floatToString(double number, uint8_t digits) //I can't take credit for this code that converts floating point numbers to a String object, I found it on the Arduino website. I don't remember who wrote it either :(
+{ 
+  String resultString = "";
+  // Handle negative numbers
+  if (number < 0.0)
+  {
+     resultString += "-";
+     number = -number;
+  }
+
+  // Round correctly so that print(1.999, 2) prints as "2.00"
+  double rounding = 0.5;
+  for (uint8_t i=0; i<digits; ++i)
+    rounding /= 10.0;
+  
+  number += rounding;
+
+  // Extract the integer part of the number and print it
+  unsigned long int_part = (unsigned long)number;
+  double remainder = number - (double)int_part;
+  resultString += int_part;
+
+  // Print the decimal point, but only if there are digits beyond
+  if (digits > 0)
+    resultString += "."; 
+
+  // Extract digits from the remainder one at a time
+  while (digits-- > 0)
+  {
+    remainder *= 10.0;
+    int toPrint = int(remainder);
+    resultString += toPrint;
+    remainder -= toPrint; 
+  } 
+  return resultString;
+}
